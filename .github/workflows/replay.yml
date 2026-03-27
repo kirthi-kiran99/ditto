@@ -1,0 +1,149 @@
+# ── ditto replay ──────────────────────────────────────────────────────────────
+#
+# Replays recorded traffic against the PR build and diffs responses.
+# A regression in any replayed recording fails the check and posts a diff
+# report as a PR comment.
+#
+# Prerequisites (repository secrets):
+#   REPLAY_DB_URL      — Postgres DSN with read access to the interaction store
+#
+# How it works:
+#   1. Build the PR's binary.
+#   2. Start the service in REPLAY_MODE=replay — it serves mock responses for
+#      all outbound calls (HTTP, DB, Redis) from the interaction store.
+#   3. Run `replay_test` which fires each recorded entry-point HTTP request at
+#      the service, diffs the outer response, and exits 1 on any regression.
+#   4. On failure, post the JSON diff report as a PR comment.
+
+name: ditto — replay check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ditto-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Replay recorded traffic
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER:     ditto
+          POSTGRES_PASSWORD: ditto
+          POSTGRES_DB:       ditto_replay
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      # ── build ──────────────────────────────────────────────────────────────
+      - name: Build PR binary + replay_test harness
+        run: cargo build --release --bin replay_test
+
+      # ── start service under test ───────────────────────────────────────────
+      # Replace with your actual service start command.
+      # The service MUST be started with REPLAY_MODE=replay and the same
+      # REPLAY_DB_URL so that its interceptors read from the same store.
+      - name: Start service under test (replay mode)
+        env:
+          REPLAY_MODE:    replay
+          REPLAY_DB_URL:  ${{ secrets.REPLAY_DB_URL }}
+          REPLAY_BUILD_HASH: ${{ github.sha }}
+        run: |
+          echo "Start your service here, e.g.:"
+          echo "  ./target/release/your_service &"
+          echo "  # wait for health check"
+          echo "  until curl -sf http://localhost:8080/health; do sleep 1; done"
+
+      # ── run harness ────────────────────────────────────────────────────────
+      - name: Run ditto replay harness
+        id: replay
+        env:
+          REPLAY_DB_URL:      ${{ secrets.REPLAY_DB_URL }}
+          REPLAY_TARGET_URL:  http://localhost:8080
+          REPLAY_BUILD_HASH:  ${{ github.sha }}
+          REPLAY_SAMPLE_SIZE: "100"
+          REPLAY_REPORT_PATH: replay-report.json
+          # Translate any production tokens → CI test tokens
+          # Format: "prod_key1:test_key1,prod_key2:test_key2"
+          REPLAY_TOKEN_MAP:   ${{ secrets.REPLAY_TOKEN_MAP }}
+          # Optional: path to .ditto-manifest.toml for intentional-change declarations
+          REPLAY_MANIFEST:    .ditto-manifest.toml
+        run: |
+          ./target/release/replay_test
+        # Continue so we can post the report even on failure
+        continue-on-error: true
+
+      # ── upload report artefact ─────────────────────────────────────────────
+      - name: Upload diff report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ditto-replay-report
+          path: replay-report.json
+          if-no-files-found: ignore
+
+      # ── post PR comment on failure ─────────────────────────────────────────
+      - name: Post diff report as PR comment
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## 🔴 ditto replay: regressions detected\n\n';
+            try {
+              const report = JSON.parse(fs.readFileSync('replay-report.json', 'utf8'));
+              body += `**${report.failed}/${report.total} recordings failed**\n\n`;
+              body += '```\n';
+              for (const r of report.results || []) {
+                if (r.is_regression) {
+                  body += `record_id: ${r.record_id}\n`;
+                  for (const m of r.mismatches || []) {
+                    if (m.regression) {
+                      body += `  seq=${m.sequence} [${m.fingerprint}]\n`;
+                      body += `    ${m.summary}\n`;
+                    }
+                  }
+                  body += '\n';
+                }
+              }
+              body += '```\n';
+            } catch (e) {
+              body += '_Could not read replay-report.json_\n';
+            }
+            body += '\n> Download the full report from the [Actions artefacts](' +
+              `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) tab.`;
+
+            github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      # ── fail the check if regressions were found ───────────────────────────
+      - name: Fail if regressions detected
+        if: steps.replay.outcome == 'failure'
+        run: |
+          echo "ditto replay detected regressions — see replay-report.json"
+          exit 1

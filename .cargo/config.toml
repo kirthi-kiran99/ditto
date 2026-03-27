@@ -1,0 +1,18 @@
+# ── ditto cargo aliases ────────────────────────────────────────────────────────
+#
+# Usage:
+#   cargo ditto-replay   -- replay recent recordings against a local service
+#   cargo ditto-record   -- (reminder) recording is controlled by REPLAY_MODE env var
+#
+# Examples:
+#   REPLAY_DB_URL=postgres://... REPLAY_TARGET_URL=http://localhost:8080 cargo ditto-replay
+#   REPLAY_DB_URL=postgres://... REPLAY_TARGET_URL=http://localhost:8080 REPLAY_SAMPLE_SIZE=10 cargo ditto-replay
+#   REPLAY_DB_URL=postgres://... REPLAY_RECORD_ID=<uuid> cargo ditto-replay
+
+[alias]
+# Run the replay harness against a locally running service.
+# All config is read from environment variables (see replay_test --help in binary).
+ditto-replay = "run -p replay-interceptors --bin replay_test --release --"
+
+# Convenience: run all workspace tests (includes replay-core, replay-diff, etc.)
+ditto-test   = "test --workspace"

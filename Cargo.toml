@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/replay-core",
+    "crates/replay-store",
+    "crates/replay-macro",
+    "crates/replay-interceptors",
+    "crates/replay-diff",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

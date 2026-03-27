@@ -1,0 +1,76 @@
+# ── ditto record ──────────────────────────────────────────────────────────────
+#
+# Captures production-equivalent traffic from the staging environment.
+# Runs automatically on every push to `main` (after staging deploy) and can
+# be triggered manually when you need a fresh recording baseline.
+#
+# Prerequisites:
+#   REPLAY_DB_URL  — Postgres DSN with write access to the interaction store
+#   STAGING_URL    — base URL of the staging service
+
+name: ditto — record traffic
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      sample_rate:
+        description: "Record 1 in N requests (default: 10)"
+        required: false
+        default: "10"
+      duration_minutes:
+        description: "How long to record traffic (default: 5)"
+        required: false
+        default: "5"
+
+jobs:
+  record:
+    name: Record staging traffic
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      # ── deploy to staging with REPLAY_MODE=record ──────────────────────────
+      # Replace this step with your actual deployment command.
+      # The service must start with REPLAY_MODE=record and REPLAY_DB_URL set.
+      - name: Deploy to staging (record mode)
+        env:
+          REPLAY_MODE:        record
+          REPLAY_SAMPLE_RATE: ${{ github.event.inputs.sample_rate || '10' }}
+          REPLAY_BUILD_HASH:  ${{ github.sha }}
+          REPLAY_DB_URL:      ${{ secrets.REPLAY_DB_URL }}
+        run: |
+          echo "Deploy your service here with the env vars above."
+          echo "Example: ./scripts/deploy-staging.sh"
+          echo "The service should start, serve real traffic for a few minutes,"
+          echo "and record sampled interactions to REPLAY_DB_URL."
+
+      # ── wait for traffic ────────────────────────────────────────────────────
+      - name: Wait for traffic sample
+        run: |
+          DURATION=${{ github.event.inputs.duration_minutes || '5' }}
+          echo "Sampling traffic for ${DURATION} minute(s)..."
+          sleep $(( DURATION * 60 ))
+
+      # ── verify interactions were stored ────────────────────────────────────
+      - name: Verify recordings exist
+        env:
+          PGPASSWORD: ${{ secrets.REPLAY_DB_PASSWORD }}
+        run: |
+          COUNT=$(psql "${{ secrets.REPLAY_DB_URL }}" -tAc \
+            "SELECT COUNT(*) FROM interactions WHERE build_hash = '${{ github.sha }}'")
+          echo "Recorded ${COUNT} interactions for build ${{ github.sha }}"
+          if [ "$COUNT" -eq "0" ]; then
+            echo "ERROR: No interactions recorded — check REPLAY_MODE and REPLAY_DB_URL"
+            exit 1
+          fi

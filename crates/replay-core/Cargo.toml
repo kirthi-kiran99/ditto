@@ -1,0 +1,22 @@
+[package]
+name = "replay-core"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+record      = []
+replay      = []
+passthrough = []
+
+[dependencies]
+uuid     = { version = "1", features = ["v4", "serde"] }
+serde    = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono   = { version = "0.4", features = ["serde"] }
+tokio    = { version = "1", features = ["full"] }
+thiserror   = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+replay-store = { path = "../replay-store" }
