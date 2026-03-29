@@ -22,6 +22,7 @@ pub struct RecordingSummaryJson {
     pub recorded_at:       DateTime<Utc>,
     pub build_hash:        String,
     pub service_name:      String,
+    pub tag:               String,
     pub interaction_count: u32,
 }
 
@@ -78,6 +79,39 @@ pub struct DiffNodeJson {
     pub category:  String,
 }
 
+// ── Tag groups ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct TagSummaryJson {
+    pub service_name:      String,
+    pub tag:               String,
+    pub recording_count:   u32,
+    pub interaction_count: u32,
+    pub last_recorded_at:  DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+pub struct TagsPage {
+    pub items:  Vec<TagSummaryJson>,
+    pub total:  usize,
+    pub limit:  usize,
+    pub offset: usize,
+}
+
+// ── Run-all result ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct RunAllResultJson {
+    pub service_name: String,
+    pub tag:          String,
+    pub total:        usize,
+    pub passed:       usize,
+    pub failed:       usize,
+    pub errors:       usize,
+    pub duration_ms:  u64,
+    pub results:      Vec<ReplayResultJson>,
+}
+
 // ── Query params ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -89,3 +123,23 @@ pub struct ListParams {
 }
 
 fn default_limit() -> usize { 20 }
+
+/// Query params for tag-specific endpoints: `?service_name=X&tag=Y`
+#[derive(Deserialize)]
+pub struct TagParams {
+    #[serde(default)]
+    pub service_name: String,
+    pub tag:          String,
+}
+
+/// Query params for tag-specific endpoints with pagination.
+#[derive(Deserialize)]
+pub struct TagListParams {
+    #[serde(default)]
+    pub service_name: String,
+    pub tag:          String,
+    #[serde(default = "default_limit")]
+    pub limit:        usize,
+    #[serde(default)]
+    pub offset:       usize,
+}

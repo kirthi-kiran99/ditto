@@ -65,9 +65,21 @@ fn global_cell() -> &'static RwLock<Option<(Arc<dyn InteractionStore>, ReplayMod
 /// [`sql::connect`] all use the provided store automatically.
 ///
 /// # Panics
-/// Does not panic — subsequent calls simply overwrite the previous value.
-/// This enables integration tests to call `install` before each test scenario.
+/// Panics if `REPLAY_MODE=record` and `REPLAY_TAG` is not set or is empty.
+/// Does not panic on subsequent calls — they simply overwrite the previous value,
+/// enabling integration tests to call `install` before each test scenario.
 pub fn install(store: Arc<dyn InteractionStore>, mode: ReplayMode) {
+    if matches!(mode, ReplayMode::Record) {
+        let tag = std::env::var("REPLAY_TAG").unwrap_or_default();
+        if tag.trim().is_empty() {
+            panic!(
+                "\n\nREPLAY_TAG is required when REPLAY_MODE=record.\n\
+                 Set it to a unique label for this recording session, e.g.:\n\n  \
+                   REPLAY_TAG=my-scenario cargo run\n\n\
+                 Recordings under the same tag are grouped together in the UI.\n"
+            );
+        }
+    }
     let mut guard = global_cell().write().expect("install: lock poisoned");
     *guard = Some((store, mode));
 }

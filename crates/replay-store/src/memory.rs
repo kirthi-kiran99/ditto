@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -7,6 +7,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::store::{InteractionStore, RecordingSummary, Result, StoreError};
+use replay_core::TagSummary;
 
 /// Thread-safe in-memory store for unit tests. No Postgres required.
 #[derive(Clone, Default, Debug)]
@@ -146,6 +147,7 @@ impl InteractionStore for InMemoryStore {
                         recorded_at:       e.recorded_at,
                         build_hash:        e.build_hash.clone(),
                         service_name:      e.service_name.clone(),
+                        tag:               e.tag.clone(),
                         interaction_count: count,
                     },
                     None => RecordingSummary {
@@ -156,6 +158,7 @@ impl InteractionStore for InMemoryStore {
                         recorded_at:       chrono::Utc::now(),
                         build_hash:        String::new(),
                         service_name:      String::new(),
+                        tag:               String::new(),
                         interaction_count: count,
                     },
                 }
@@ -165,6 +168,132 @@ impl InteractionStore for InMemoryStore {
         // Most recent first.
         summaries.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
         Ok(summaries.into_iter().skip(offset).take(limit).collect())
+    }
+
+    async fn list_tags(&self, limit: usize, offset: usize) -> Result<Vec<TagSummary>> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+
+        // Aggregate by (service_name, tag).
+        let mut groups: HashMap<(String, String), (HashSet<Uuid>, u32, chrono::DateTime<chrono::Utc>)> = HashMap::new();
+        for (id, interactions) in data.iter() {
+            for i in interactions {
+                let key = (i.service_name.clone(), i.tag.clone());
+                let entry = groups.entry(key).or_insert_with(|| (HashSet::new(), 0, i.recorded_at));
+                entry.0.insert(*id);
+                entry.1 += 1;
+                if i.recorded_at > entry.2 {
+                    entry.2 = i.recorded_at;
+                }
+            }
+        }
+
+        let mut summaries: Vec<TagSummary> = groups
+            .into_iter()
+            .map(|((service_name, tag), (record_ids, interaction_count, last_recorded_at))| {
+                TagSummary {
+                    service_name,
+                    tag,
+                    recording_count:   record_ids.len() as u32,
+                    interaction_count,
+                    last_recorded_at,
+                }
+            })
+            .collect();
+
+        summaries.sort_by(|a, b| b.last_recorded_at.cmp(&a.last_recorded_at));
+        Ok(summaries.into_iter().skip(offset).take(limit).collect())
+    }
+
+    async fn count_tags(&self) -> Result<usize> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+        let mut groups: HashSet<(String, String)> = HashSet::new();
+        for interactions in data.values() {
+            for i in interactions {
+                groups.insert((i.service_name.clone(), i.tag.clone()));
+            }
+        }
+        Ok(groups.len())
+    }
+
+    async fn list_recordings_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+        limit:        usize,
+        offset:       usize,
+    ) -> Result<Vec<RecordingSummary>> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+
+        let mut summaries: Vec<RecordingSummary> = data
+            .iter()
+            .filter_map(|(id, interactions)| {
+                // Keep only record_ids where at least one interaction matches the filter.
+                if !interactions.iter().any(|i| i.service_name == service_name && i.tag == tag) {
+                    return None;
+                }
+                let count = interactions.len() as u32;
+                let entry = interactions.iter().find(|i| i.sequence == 0);
+                Some(match entry {
+                    Some(e) => RecordingSummary {
+                        record_id:         *id,
+                        method:            e.request.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        path:              e.request.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        status_code:       e.response.get("status").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
+                        recorded_at:       e.recorded_at,
+                        build_hash:        e.build_hash.clone(),
+                        service_name:      e.service_name.clone(),
+                        tag:               e.tag.clone(),
+                        interaction_count: count,
+                    },
+                    None => RecordingSummary {
+                        record_id:         *id,
+                        method:            String::new(),
+                        path:              String::new(),
+                        status_code:       0,
+                        recorded_at:       chrono::Utc::now(),
+                        build_hash:        String::new(),
+                        service_name:      service_name.to_string(),
+                        tag:               tag.to_string(),
+                        interaction_count: count,
+                    },
+                })
+            })
+            .collect();
+
+        summaries.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+        Ok(summaries.into_iter().skip(offset).take(limit).collect())
+    }
+
+    async fn count_recordings_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+    ) -> Result<usize> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+        let count = data
+            .iter()
+            .filter(|(_, interactions)| {
+                interactions.iter().any(|i| i.service_name == service_name && i.tag == tag)
+            })
+            .count();
+        Ok(count)
+    }
+
+    async fn get_record_ids_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+    ) -> Result<Vec<Uuid>> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+        let mut ids: Vec<Uuid> = data
+            .iter()
+            .filter(|(_, interactions)| {
+                interactions.iter().any(|i| i.service_name == service_name && i.tag == tag)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        ids.sort();
+        Ok(ids)
     }
 }
 

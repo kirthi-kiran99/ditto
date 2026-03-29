@@ -21,6 +21,7 @@ pub struct Interaction {
     pub recorded_at:  DateTime<Utc>,
     pub build_hash:   String,
     pub service_name: String,
+    pub tag:          String,
 }
 
 impl Interaction {
@@ -48,6 +49,7 @@ impl Interaction {
             recorded_at:  Utc::now(),
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
         }
     }
 }

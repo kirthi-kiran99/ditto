@@ -20,5 +20,5 @@ pub use interceptor::{ReplayError, ReplayInterceptor};
 pub use interaction::Interaction;
 pub use matching::{MatchConfig, MatchOutcome, MatchingEngine, MissStrategy};
 pub use runner::InterceptorRunner;
-pub use store::{InteractionStore, RecordingSummary, StoreError};
+pub use store::{InteractionStore, RecordingSummary, TagSummary, StoreError};
 pub use types::{CallStatus, CallType, ReplayMode};

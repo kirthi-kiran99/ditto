@@ -56,6 +56,25 @@ pub fn current_mode() -> ReplayMode {
     }
 }
 
+/// Read `REPLAY_TAG` from the environment.
+pub fn current_tag() -> String {
+    std::env::var("REPLAY_TAG").unwrap_or_default()
+}
+
+/// Read `REPLAY_SERVICE_NAME` from the environment.
+/// Falls back to the executable filename (e.g. "full-flow") when not set.
+pub fn current_service_name() -> String {
+    std::env::var("REPLAY_SERVICE_NAME").unwrap_or_else(|_| {
+        std::env::args()
+            .next()
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    })
+}
+
 /// Axum middleware (store-aware variant) that establishes a `MockContext` for
 /// every incoming request **and** records the entry-point interaction.
 ///
@@ -111,11 +130,16 @@ pub async fn recording_middleware_with_store(
     let fingerprint = FingerprintBuilder::http(&method, &path);
     let mode_clone  = effective_mode.clone();
 
-    let ctx = if let Some(cid) = capture_id {
+    let tag          = current_tag();
+    let service_name = current_service_name();
+
+    let mut ctx = if let Some(cid) = capture_id {
         MockContext::shadow(record_id, cid)
     } else {
         MockContext::with_id(record_id, effective_mode)
     };
+    ctx.tag          = tag;
+    ctx.service_name = service_name;
 
     MOCK_CTX.scope(ctx, async move {
         // In Record mode only: buffer the request body so we can store it and
@@ -188,7 +212,8 @@ pub async fn recording_middleware_with_store(
                     error:        None,
                     recorded_at:  chrono::Utc::now(),
                     build_hash:   slot.build_hash,
-                    service_name: String::new(),
+                    service_name: slot.service_name,
+                    tag:          slot.tag,
                 };
                 let _ = store.write(&interaction).await;
 

@@ -16,7 +16,7 @@ use tracing::info;
 
 use config::Config;
 use routes::{
-    recordings::{get_recording, list_recordings},
+    recordings::{get_recording, list_recordings, list_tags, list_recordings_by_tag, replay_all_by_tag},
     replay::trigger_replay,
 };
 
@@ -63,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/recordings", get(list_recordings))
         .route("/api/recordings/:id", get(get_recording))
         .route("/api/recordings/:id/replay", post(trigger_replay))
+        .route("/api/tags", get(list_tags))
+        .route("/api/tags/recordings", get(list_recordings_by_tag))
+        .route("/api/tags/replay-all", post(replay_all_by_tag))
         // ── State ───────────────────────────────────────────────────────────────
         .with_state(state)
         // ── Static files (React app) — fallback for everything else ─────────────

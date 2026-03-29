@@ -13,6 +13,7 @@ pub struct MockContext {
     pub mode:         ReplayMode,
     pub build_hash:   String,
     pub service_name: String,
+    pub tag:          String,
     /// Store scoped to this recording context. When set it takes precedence
     /// over the process-wide global store, giving test isolation for free.
     pub store:        Option<Arc<dyn MacroStore>>,
@@ -29,6 +30,7 @@ impl MockContext {
             mode,
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
             store:        None,
             capture_id:   None,
             sequence:     Arc::new(AtomicU32::new(0)),
@@ -41,6 +43,7 @@ impl MockContext {
             mode,
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
             store:        None,
             capture_id:   None,
             sequence:     Arc::new(AtomicU32::new(0)),
@@ -57,6 +60,7 @@ impl MockContext {
             mode,
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
             store:        Some(store),
             capture_id:   None,
             sequence:     Arc::new(AtomicU32::new(0)),
@@ -72,6 +76,7 @@ impl MockContext {
             mode:         ReplayMode::Shadow,
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
             store:        None,
             capture_id:   Some(capture_id),
             sequence:     Arc::new(AtomicU32::new(0)),
@@ -85,6 +90,7 @@ impl MockContext {
             mode:         ReplayMode::Shadow,
             build_hash:   String::new(),
             service_name: String::new(),
+            tag:          String::new(),
             store:        Some(store),
             capture_id:   Some(capture_id),
             sequence:     Arc::new(AtomicU32::new(0)),
@@ -106,16 +112,18 @@ impl MockContext {
 /// Created by each interceptor before it decides to record or replay.
 #[derive(Debug, Clone)]
 pub struct InteractionSlot {
-    pub record_id:   Uuid,
-    pub sequence:    u32,
-    pub call_type:   CallType,
-    pub fingerprint: String,
-    pub mode:        ReplayMode,
-    pub build_hash:  String,
+    pub record_id:    Uuid,
+    pub sequence:     u32,
+    pub call_type:    CallType,
+    pub fingerprint:  String,
+    pub mode:         ReplayMode,
+    pub build_hash:   String,
+    pub service_name: String,
+    pub tag:          String,
     /// Effective store for this slot (already resolved from context).
-    pub store:       Option<Arc<dyn MacroStore>>,
+    pub store:        Option<Arc<dyn MacroStore>>,
     /// In `Shadow` mode: the capture record_id that `#[record_io]` writes to.
-    pub capture_id:  Option<Uuid>,
+    pub capture_id:   Option<Uuid>,
 }
 
 tokio::task_local! {
@@ -131,14 +139,16 @@ pub fn current_ctx() -> Option<MockContext> {
 /// Returns None when no context is active.
 pub fn next_interaction_slot(call_type: CallType, fingerprint: String) -> Option<InteractionSlot> {
     MOCK_CTX.try_with(|ctx| InteractionSlot {
-        record_id:   ctx.record_id,
-        sequence:    ctx.next_seq(),
+        record_id:    ctx.record_id,
+        sequence:     ctx.next_seq(),
         call_type,
         fingerprint,
-        mode:        ctx.mode.clone(),
-        build_hash:  ctx.build_hash.clone(),
-        store:       ctx.effective_store(),
-        capture_id:  ctx.capture_id,
+        mode:         ctx.mode.clone(),
+        build_hash:   ctx.build_hash.clone(),
+        service_name: ctx.service_name.clone(),
+        tag:          ctx.tag.clone(),
+        store:        ctx.effective_store(),
+        capture_id:   ctx.capture_id,
     }).ok()
 }
 
@@ -237,5 +247,17 @@ mod tests {
             assert_eq!(seqs, [0, 1, 2]);
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn slot_carries_tag_and_service_name() {
+        let mut ctx = MockContext::new(ReplayMode::Record);
+        ctx.tag = "my-tag".into();
+        ctx.service_name = "my-svc".into();
+        MOCK_CTX.scope(ctx, async {
+            let slot = next_interaction_slot(CallType::Http, "GET /foo".into()).unwrap();
+            assert_eq!(slot.tag, "my-tag");
+            assert_eq!(slot.service_name, "my-svc");
+        }).await;
     }
 }

@@ -169,7 +169,10 @@ async fn install_allows_client_new_to_work() {
         .await;
 
     let store = Arc::new(InMemoryStore::new());
+    // REPLAY_TAG is required when mode=Record; set it for this test.
+    std::env::set_var("REPLAY_TAG", "install-test-tag");
     replay_compat::install(store.clone(), ReplayMode::Record);
+    std::env::remove_var("REPLAY_TAG");
 
     let client    = http::Client::new(); // uses global store from install()
     let record_id = Uuid::new_v4();

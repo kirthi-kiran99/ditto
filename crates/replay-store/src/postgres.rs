@@ -6,6 +6,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use uuid::Uuid;
 
 use crate::store::{InteractionStore, RecordingSummary, Result, StoreError};
+use replay_core::TagSummary;
 
 #[derive(Debug)]
 pub struct PostgresStore {
@@ -89,6 +90,7 @@ fn row_to_interaction(row: &sqlx::postgres::PgRow) -> Interaction {
         recorded_at:  row.get("recorded_at"),
         build_hash:   row.get("build_hash"),
         service_name: row.get("service_name"),
+        tag:          row.get("tag"),
     }
 }
 
@@ -97,7 +99,7 @@ const SELECT_COLS: &str = r#"
     call_type::text as call_type, fingerprint,
     request, response, duration_ms,
     status::text as status, error,
-    recorded_at, build_hash, service_name
+    recorded_at, build_hash, service_name, tag
 "#;
 
 // ── InteractionStore impl ─────────────────────────────────────────────────────
@@ -110,8 +112,8 @@ impl InteractionStore for PostgresStore {
             INSERT INTO interactions
                 (id, record_id, parent_id, sequence, call_type, fingerprint,
                  request, response, duration_ms, status, error,
-                 recorded_at, build_hash, service_name)
-            VALUES ($1,$2,$3,$4,$5::call_type,$6,$7,$8,$9,$10::call_status,$11,$12,$13,$14)
+                 recorded_at, build_hash, service_name, tag)
+            VALUES ($1,$2,$3,$4,$5::call_type,$6,$7,$8,$9,$10::call_status,$11,$12,$13,$14,$15)
             "#,
         )
         .bind(i.id)
@@ -128,6 +130,7 @@ impl InteractionStore for PostgresStore {
         .bind(i.recorded_at)
         .bind(&i.build_hash)
         .bind(&i.service_name)
+        .bind(&i.tag)
         .execute(&self.pool)
         .await
         .map_err(|e| StoreError::Database(e.to_string()))?;
@@ -150,8 +153,8 @@ impl InteractionStore for PostgresStore {
                 INSERT INTO interactions
                     (id, record_id, parent_id, sequence, call_type, fingerprint,
                      request, response, duration_ms, status, error,
-                     recorded_at, build_hash, service_name)
-                VALUES ($1,$2,$3,$4,$5::call_type,$6,$7,$8,$9,$10::call_status,$11,$12,$13,$14)
+                     recorded_at, build_hash, service_name, tag)
+                VALUES ($1,$2,$3,$4,$5::call_type,$6,$7,$8,$9,$10::call_status,$11,$12,$13,$14,$15)
                 "#,
             )
             .bind(i.id)
@@ -168,6 +171,7 @@ impl InteractionStore for PostgresStore {
             .bind(i.recorded_at)
             .bind(&i.build_hash)
             .bind(&i.service_name)
+            .bind(&i.tag)
             .execute(&mut *tx)
             .await
             .map_err(|e| StoreError::Database(e.to_string()))?;
@@ -276,12 +280,13 @@ impl InteractionStore for PostgresStore {
             r#"
             SELECT
                 record_id,
-                COUNT(*)::int                                                            AS interaction_count,
-                MAX(recorded_at)                                                         AS recorded_at,
-                COALESCE(MAX(build_hash),   '')                                          AS build_hash,
-                COALESCE(MAX(service_name), '')                                          AS service_name,
-                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'method' END), '')    AS method,
-                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'path'   END), '')    AS path,
+                COUNT(*)::int                                                                AS interaction_count,
+                MAX(recorded_at)                                                             AS recorded_at,
+                COALESCE(MAX(build_hash),   '')                                              AS build_hash,
+                COALESCE(MAX(service_name), '')                                              AS service_name,
+                COALESCE(MAX(tag),          '')                                              AS tag,
+                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'method' END), '')        AS method,
+                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'path'   END), '')        AS path,
                 COALESCE(MAX(CASE WHEN sequence = 0 THEN (response->>'status')::int END), 0) AS status_code
             FROM interactions
             GROUP BY record_id
@@ -303,6 +308,7 @@ impl InteractionStore for PostgresStore {
                 recorded_at:       row.get::<DateTime<chrono::Utc>, _>("recorded_at"),
                 build_hash:        row.get("build_hash"),
                 service_name:      row.get("service_name"),
+                tag:               row.get("tag"),
                 method:            row.get("method"),
                 path:              row.get("path"),
                 status_code:       row.get::<i32, _>("status_code") as u16,
@@ -310,6 +316,129 @@ impl InteractionStore for PostgresStore {
             .collect();
 
         Ok(summaries)
+    }
+
+    async fn list_tags(&self, limit: usize, offset: usize) -> Result<Vec<TagSummary>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT service_name, tag,
+                   COUNT(DISTINCT record_id)::int AS recording_count,
+                   COUNT(*)::int                  AS interaction_count,
+                   MAX(recorded_at)               AS last_recorded_at
+            FROM interactions
+            GROUP BY service_name, tag
+            ORDER BY MAX(recorded_at) DESC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+
+        Ok(rows
+            .iter()
+            .map(|row| TagSummary {
+                service_name:      row.get("service_name"),
+                tag:               row.get("tag"),
+                recording_count:   row.get::<i32, _>("recording_count") as u32,
+                interaction_count: row.get::<i32, _>("interaction_count") as u32,
+                last_recorded_at:  row.get::<DateTime<chrono::Utc>, _>("last_recorded_at"),
+            })
+            .collect())
+    }
+
+    async fn count_tags(&self) -> Result<usize> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n FROM (SELECT 1 FROM interactions GROUP BY service_name, tag) t",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+        Ok(row.get::<i64, _>("n") as usize)
+    }
+
+    async fn list_recordings_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+        limit:        usize,
+        offset:       usize,
+    ) -> Result<Vec<RecordingSummary>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT record_id,
+                   COUNT(*)::int                                                                AS interaction_count,
+                   MAX(recorded_at)                                                             AS recorded_at,
+                   COALESCE(MAX(build_hash),   '')                                              AS build_hash,
+                   COALESCE(MAX(service_name), '')                                              AS service_name,
+                   COALESCE(MAX(tag),          '')                                              AS tag,
+                   COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'method' END), '')        AS method,
+                   COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'path'   END), '')        AS path,
+                   COALESCE(MAX(CASE WHEN sequence = 0 THEN (response->>'status')::int END), 0) AS status_code
+            FROM interactions
+            WHERE service_name = $1 AND tag = $2
+            GROUP BY record_id
+            ORDER BY MAX(recorded_at) DESC
+            LIMIT $3 OFFSET $4
+            "#,
+        )
+        .bind(service_name)
+        .bind(tag)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+
+        Ok(rows
+            .iter()
+            .map(|row| RecordingSummary {
+                record_id:         row.get("record_id"),
+                interaction_count: row.get::<i32, _>("interaction_count") as u32,
+                recorded_at:       row.get::<DateTime<chrono::Utc>, _>("recorded_at"),
+                build_hash:        row.get("build_hash"),
+                service_name:      row.get("service_name"),
+                tag:               row.get("tag"),
+                method:            row.get("method"),
+                path:              row.get("path"),
+                status_code:       row.get::<i32, _>("status_code") as u16,
+            })
+            .collect())
+    }
+
+    async fn count_recordings_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+    ) -> Result<usize> {
+        let row = sqlx::query(
+            "SELECT COUNT(DISTINCT record_id) AS n FROM interactions WHERE service_name=$1 AND tag=$2",
+        )
+        .bind(service_name)
+        .bind(tag)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+        Ok(row.get::<i64, _>("n") as usize)
+    }
+
+    async fn get_record_ids_by_tag(
+        &self,
+        service_name: &str,
+        tag:          &str,
+    ) -> Result<Vec<Uuid>> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT record_id FROM interactions WHERE service_name=$1 AND tag=$2 ORDER BY record_id",
+        )
+        .bind(service_name)
+        .bind(tag)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+
+        Ok(rows.iter().map(|r| r.get::<Uuid, _>("record_id")).collect())
     }
 }
 

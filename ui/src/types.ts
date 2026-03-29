@@ -8,6 +8,7 @@ export interface RecordingSummary {
   recorded_at:       string; // ISO-8601
   build_hash:        string;
   service_name:      string;
+  tag:               string;
   interaction_count: number;
 }
 
@@ -68,10 +69,41 @@ export interface MismatchDetail {
 export interface ReplayResult {
   record_id:       string;
   status:          ReplayStatus;
+  error?:          string;
   is_regression:   boolean;
   duration_ms:     number;
   matched:         number;
   missing_replays: number[];
   extra_replays:   number[];
   mismatches:      MismatchDetail[];
+}
+
+// ── Tag groups ────────────────────────────────────────────────────────────────
+
+export interface TagSummary {
+  service_name:      string;
+  tag:               string;
+  recording_count:   number;
+  interaction_count: number;
+  last_recorded_at:  string; // ISO-8601
+}
+
+export interface TagsPage {
+  items:  TagSummary[];
+  total:  number;
+  limit:  number;
+  offset: number;
+}
+
+// ── Run-all result ────────────────────────────────────────────────────────────
+
+export interface RunAllResult {
+  service_name: string;
+  tag:          string;
+  total:        number;
+  passed:       number;
+  failed:       number;
+  errors:       number;
+  duration_ms:  number;
+  results:      ReplayResult[];
 }

@@ -15,6 +15,18 @@ pub enum StoreError {
     Database(String),
 }
 
+/// Summary of a (service_name, tag) group — one card in the tags landing UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagSummary {
+    pub service_name:      String,
+    pub tag:               String,
+    /// Number of distinct record_ids under this (service_name, tag).
+    pub recording_count:   u32,
+    /// Total interactions across all recordings in this group.
+    pub interaction_count: u32,
+    pub last_recorded_at:  DateTime<Utc>,
+}
+
 /// Summary of a single recorded request — one row in the recordings list UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordingSummary {
@@ -28,6 +40,7 @@ pub struct RecordingSummary {
     pub recorded_at:       DateTime<Utc>,
     pub build_hash:        String,
     pub service_name:      String,
+    pub tag:               String,
     /// Total number of interactions (entry-point + all outbound calls).
     pub interaction_count: u32,
 }
@@ -115,6 +128,7 @@ pub trait InteractionStore: Send + Sync {
                     recorded_at:       e.recorded_at,
                     build_hash:        e.build_hash,
                     service_name:      e.service_name,
+                    tag:               e.tag,
                     interaction_count: count,
                 },
                 None => RecordingSummary {
@@ -125,11 +139,51 @@ pub trait InteractionStore: Send + Sync {
                     recorded_at:       Utc::now(),
                     build_hash:        String::new(),
                     service_name:      String::new(),
+                    tag:               String::new(),
                     interaction_count: count,
                 },
             };
             summaries.push(summary);
         }
         Ok(summaries)
+    }
+
+    /// Paginated list of (service_name, tag) groups ordered by most-recently recorded.
+    async fn list_tags(&self, _limit: usize, _offset: usize) -> Result<Vec<TagSummary>> {
+        Err(StoreError::Database("list_tags not implemented".into()))
+    }
+
+    /// Total number of distinct (service_name, tag) groups.
+    async fn count_tags(&self) -> Result<usize> {
+        Err(StoreError::Database("count_tags not implemented".into()))
+    }
+
+    /// Paginated recordings for a specific (service_name, tag), newest first.
+    async fn list_recordings_by_tag(
+        &self,
+        _service_name: &str,
+        _tag:          &str,
+        _limit:        usize,
+        _offset:       usize,
+    ) -> Result<Vec<RecordingSummary>> {
+        Err(StoreError::Database("list_recordings_by_tag not implemented".into()))
+    }
+
+    /// Count distinct record_ids under a (service_name, tag).
+    async fn count_recordings_by_tag(
+        &self,
+        _service_name: &str,
+        _tag:          &str,
+    ) -> Result<usize> {
+        Err(StoreError::Database("count_recordings_by_tag not implemented".into()))
+    }
+
+    /// All record_ids under a (service_name, tag) — used by "Run All".
+    async fn get_record_ids_by_tag(
+        &self,
+        _service_name: &str,
+        _tag:          &str,
+    ) -> Result<Vec<Uuid>> {
+        Err(StoreError::Database("get_record_ids_by_tag not implemented".into()))
     }
 }

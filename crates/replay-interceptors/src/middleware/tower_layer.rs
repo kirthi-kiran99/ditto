@@ -173,7 +173,8 @@ where
                                     error:        None,
                                     recorded_at:  chrono::Utc::now(),
                                     build_hash:   slot.build_hash,
-                                    service_name: String::new(),
+                                    service_name: slot.service_name.clone(),
+                                    tag:          slot.tag.clone(),
                                 })
                                 .await;
                         }

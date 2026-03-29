@@ -259,6 +259,7 @@ fn seed_store(store: &InMemoryStore, record_id: Uuid) {
         recorded_at:  chrono::Utc::now(),
         build_hash:   String::new(),
         service_name: String::new(),
+        tag:          String::new(),
     }]);
 }
 

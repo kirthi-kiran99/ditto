@@ -4,8 +4,9 @@ import { api } from "../api";
 import type { RecordingSummary } from "../types";
 
 interface Props {
-  onSelect: (recordId: string) => void;
+  onSelect:   (recordId: string) => void;
   selectedId: string | null;
+  filter?:    { service_name: string; tag: string };
 }
 
 // ── Method badge ──────────────────────────────────────────────────────────────
@@ -55,12 +56,16 @@ function formatDate(iso: string): string {
 
 const PAGE_SIZE = 20;
 
-export function RecordingsTable({ onSelect, selectedId }: Props) {
+export function RecordingsTable({ onSelect, selectedId, filter }: Props) {
   const [offset, setOffset] = useState(0);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["recordings", offset],
-    queryFn:  () => api.listRecordings(PAGE_SIZE, offset),
+    queryKey: filter
+      ? ["recordings", "tag", filter.service_name, filter.tag, offset]
+      : ["recordings", offset],
+    queryFn: filter
+      ? () => api.listRecordingsByTag(filter.service_name, filter.tag, PAGE_SIZE, offset)
+      : () => api.listRecordings(PAGE_SIZE, offset),
     staleTime: 10_000,
   });
 

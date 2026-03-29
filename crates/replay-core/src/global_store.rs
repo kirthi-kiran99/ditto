@@ -88,7 +88,8 @@ pub async fn record_fn_call(
         error:        None,
         recorded_at:  chrono::Utc::now(),
         build_hash:   slot.build_hash,
-        service_name: String::new(),
+        service_name: slot.service_name,
+        tag:          slot.tag,
     };
 
     store.store_fn_call(&interaction).await;
