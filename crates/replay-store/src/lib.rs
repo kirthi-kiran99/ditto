@@ -1,10 +1,12 @@
+pub mod config;
 pub mod memory;
 pub mod postgres;
 pub mod store;
 
+pub use config::{db_url, redis_url};
 pub use memory::InMemoryStore;
 pub use postgres::PostgresStore;
-pub use store::{InteractionStore, StoreError};
+pub use store::{InteractionStore, RecordingSummary, StoreError};
 
 use std::sync::Arc;
 

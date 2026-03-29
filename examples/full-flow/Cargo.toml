@@ -1,0 +1,31 @@
+[package]
+name    = "full-flow"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "full-flow"
+path = "src/main.rs"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[dependencies]
+replay-core         = { path = "../../crates/replay-core" }
+replay-store        = { path = "../../crates/replay-store" }
+replay-interceptors = { path = "../../crates/replay-interceptors" }
+replay-compat       = { path = "../../crates/replay-compat" }
+replay-macro        = { path = "../../crates/replay-macro" }
+
+axum               = "0.6"
+tokio              = { version = "1", features = ["full"] }
+tonic              = { version = "0.10", features = ["transport"] }
+prost              = "0.12"
+tower              = "0.4"
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+sqlx               = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
+uuid               = { version = "1", features = ["v4"] }
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

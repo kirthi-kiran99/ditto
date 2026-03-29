@@ -141,19 +141,34 @@ impl ReplayHarness {
         let path   = entry.request["path"].as_str().unwrap_or("/").to_string();
         let url    = format!("{}{}", self.target_url.trim_end_matches('/'), path);
 
-        // 3. Build and fire the request
+        // 3. Build and fire the request.
+        // We always send a fresh capture_id so that, when the service runs in
+        // REPLAY_MODE=replay, the middleware upgrades to Shadow mode and writes
+        // new #[record_io] results to capture_id instead of just returning stored values.
+        let capture_id = Uuid::new_v4();
+
         let mut builder = self.client
             .request(
                 method.parse().unwrap_or(reqwest::Method::GET),
                 &url,
             )
             .header("x-replay-record-id", record_id.to_string())
+            .header("x-ditto-capture-id",  capture_id.to_string())
             .header("content-type", "application/json");
 
         // Apply auth token translation
         if let Some(auth) = entry.request["headers"]["authorization"].as_str() {
             let translated = self.translate_token(auth);
             builder = builder.header("authorization", translated);
+        }
+
+        // Re-send the original request body (stored in entry.request["body"]).
+        // For GET/HEAD requests the body is null/absent, so nothing is sent.
+        // For POST/PUT/PATCH the body is required for the handler to work.
+        if let Some(body) = entry.request.get("body") {
+            if !body.is_null() {
+                builder = builder.body(body.to_string());
+            }
         }
 
         // Fire request
@@ -165,18 +180,19 @@ impl ReplayHarness {
         let replay_status = resp.status().as_u16();
         let replay_body   = resp.json::<Value>().await.unwrap_or(Value::Null);
 
-        // 4. Build a synthetic "replayed" interaction list for the entry-point comparison.
+        // 4. Build the replayed interaction list for diffing.
         //
-        //    The outer HTTP response (status + body) is the primary comparison target.
-        //    We update only the entry-point in a clone; all other interactions keep
-        //    their recorded values (inner calls are not re-captured during the
-        //    lightweight harness run — that would require a full replay store write-back).
+        //    a) Start with a clone of the recorded interactions.
+        //    b) Update seq=0 (HTTP entry-point) with the live HTTP response.
+        //    c) Read back any interactions that the service wrote to capture_id
+        //       in Shadow mode (these are the actual #[record_io] call results
+        //       from the faulty service).  Merge them in by sequence number so
+        //       the diff engine sees real new values rather than the stored ones.
+        //    d) Clean up the temporary capture record from the store.
         let mut replayed_interactions = recorded.clone();
+
+        // (b) update entry-point response
         if let Some(ep) = replayed_interactions.iter_mut().find(|i| i.sequence == 0) {
-            // Build replayed response with only fields the recording actually had,
-            // plus the body if the service returned one.
-            // Use the recorded status as the baseline so we don't flag noise fields;
-            // the status comparison happens via the diff engine.
             let mut resp = serde_json::Map::new();
             resp.insert("status".to_string(), serde_json::json!(replay_status));
             if !replay_body.is_null() {
@@ -185,9 +201,18 @@ impl ReplayHarness {
             ep.response = Value::Object(resp);
         }
 
-        // The recorded interactions are compared as-is.  If the recording has
-        // no "body" field in the entry-point response, the diff engine will see
-        // any new "body" as DiffCategory::Added (not Regression).
+        // (c) merge shadow-captured interactions (actual #[record_io] return values)
+        if let Ok(captured) = self.store.get_by_record_id(capture_id).await {
+            for cap in &captured {
+                if let Some(slot) = replayed_interactions.iter_mut().find(|i| i.sequence == cap.sequence) {
+                    slot.response = cap.response.clone();
+                }
+            }
+        }
+
+        // (d) clean up temp capture record (best-effort; never fails the diff)
+        let _ = self.store.delete_by_record_id(capture_id).await;
+
         let recorded_for_diff = recorded;
 
         // 5. Diff

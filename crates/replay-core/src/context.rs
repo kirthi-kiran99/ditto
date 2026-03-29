@@ -16,6 +16,9 @@ pub struct MockContext {
     /// Store scoped to this recording context. When set it takes precedence
     /// over the process-wide global store, giving test isolation for free.
     pub store:        Option<Arc<dyn MacroStore>>,
+    /// In `Shadow` mode: the temporary record_id that `#[record_io]` writes
+    /// new interactions to.  `None` in all other modes.
+    pub capture_id:   Option<Uuid>,
     sequence:         Arc<AtomicU32>,
 }
 
@@ -27,6 +30,7 @@ impl MockContext {
             build_hash:   String::new(),
             service_name: String::new(),
             store:        None,
+            capture_id:   None,
             sequence:     Arc::new(AtomicU32::new(0)),
         }
     }
@@ -38,6 +42,7 @@ impl MockContext {
             build_hash:   String::new(),
             service_name: String::new(),
             store:        None,
+            capture_id:   None,
             sequence:     Arc::new(AtomicU32::new(0)),
         }
     }
@@ -53,6 +58,35 @@ impl MockContext {
             build_hash:   String::new(),
             service_name: String::new(),
             store:        Some(store),
+            capture_id:   None,
+            sequence:     Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Constructor for Shadow mode: mocks external deps from `record_id` but
+    /// writes `#[record_io]` results to `capture_id`.
+    /// Falls back to the process-wide global store for the `#[record_io]` runtime.
+    pub fn shadow(record_id: Uuid, capture_id: Uuid) -> Self {
+        Self {
+            record_id,
+            mode:         ReplayMode::Shadow,
+            build_hash:   String::new(),
+            service_name: String::new(),
+            store:        None,
+            capture_id:   Some(capture_id),
+            sequence:     Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Shadow mode with an explicit store — useful in tests to avoid global state.
+    pub fn shadow_with_store(record_id: Uuid, capture_id: Uuid, store: Arc<dyn MacroStore>) -> Self {
+        Self {
+            record_id,
+            mode:         ReplayMode::Shadow,
+            build_hash:   String::new(),
+            service_name: String::new(),
+            store:        Some(store),
+            capture_id:   Some(capture_id),
             sequence:     Arc::new(AtomicU32::new(0)),
         }
     }
@@ -80,6 +114,8 @@ pub struct InteractionSlot {
     pub build_hash:  String,
     /// Effective store for this slot (already resolved from context).
     pub store:       Option<Arc<dyn MacroStore>>,
+    /// In `Shadow` mode: the capture record_id that `#[record_io]` writes to.
+    pub capture_id:  Option<Uuid>,
 }
 
 tokio::task_local! {
@@ -102,6 +138,7 @@ pub fn next_interaction_slot(call_type: CallType, fingerprint: String) -> Option
         mode:        ctx.mode.clone(),
         build_hash:  ctx.build_hash.clone(),
         store:       ctx.effective_store(),
+        capture_id:  ctx.capture_id,
     }).ok()
 }
 

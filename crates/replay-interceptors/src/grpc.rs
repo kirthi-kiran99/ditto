@@ -111,7 +111,7 @@ where
 
         Box::pin(async move {
             match slot.as_ref().map(|s| &s.mode) {
-                Some(ReplayMode::Replay) => {
+                Some(ReplayMode::Replay) | Some(ReplayMode::Shadow) => {
                     let slot = slot.unwrap();
 
                     let stored = store

@@ -16,3 +16,13 @@ ditto-replay = "run -p replay-interceptors --bin replay_test --release --"
 
 # Convenience: run all workspace tests (includes replay-core, replay-diff, etc.)
 ditto-test   = "test --workspace"
+
+# Scan the codebase for uninstrumented call sites (reqwest, tokio::spawn, etc.)
+# Pass -- --fix to auto-rewrite, -- --json for machine-readable output.
+replay-audit = "run -p replay-interceptors --features audit --bin replay-audit --"
+
+# Start the ditto web server (API + React UI).
+# Requires: REPLAY_DB_URL, REPLAY_TARGET_URL
+# Optional: REPLAY_SERVER_PORT (default 4000), REPLAY_UI_DIR (default ./ui/dist)
+# Build the UI first: cd ui && npm ci && npm run build
+ditto-server = "run -p ditto-server --"

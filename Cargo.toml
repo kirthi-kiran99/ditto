@@ -6,6 +6,12 @@ members = [
     "crates/replay-macro",
     "crates/replay-interceptors",
     "crates/replay-diff",
+    "crates/replay-compat",
+    "server",
+    "examples/minimal-axum",
+    "examples/custom-interceptor",
+    "examples/full-flow",
+    "examples/full-flow-faulty",
 ]
 
 [workspace.package]

@@ -1,0 +1,22 @@
+# ditto-server configuration
+# Copy this file to ditto.toml and fill in your values.
+# Environment variables take precedence over values set here.
+
+# Required: Postgres connection string for the interaction store.
+db_url = "postgres://user:password@localhost:5432/ditto"
+
+# Redis connection string (used by full-flow and any service using replay_compat::redis).
+# Default: redis://127.0.0.1
+redis_url = "redis://127.0.0.1"
+
+# URL of the service under test that replays are fired at.
+# Default: http://localhost:3000
+target_url = "http://localhost:3000"
+
+# Port for the ditto-server HTTP server.
+# Default: 4000
+port = 4000
+
+# Path to the built React assets (output of `cd ui && npm run build`).
+# Default: ./ui/dist
+ui_dir = "./ui/dist"

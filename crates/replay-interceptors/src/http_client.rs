@@ -96,7 +96,9 @@ impl Middleware for ReplayMiddleware {
                 Ok(json_to_response(status_code, resp_json))
             }
 
-            ReplayMode::Replay => {
+            // Shadow: mock external HTTP calls from the original recording
+            // (same as Replay). Only #[record_io] functions run real code in Shadow mode.
+            ReplayMode::Replay | ReplayMode::Shadow => {
                 let recorded = self
                     .store
                     .find_match(slot.record_id, CallType::Http, &slot.fingerprint, slot.sequence)

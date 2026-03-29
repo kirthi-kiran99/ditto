@@ -1,0 +1,16 @@
+syntax = "proto3";
+package fulfillment.v1;
+
+service FulfillmentService {
+  rpc NotifyOrder (NotifyOrderRequest) returns (NotifyOrderResponse);
+}
+
+message NotifyOrderRequest {
+  string order_id = 1;
+  double amount   = 2;
+}
+
+message NotifyOrderResponse {
+  string status         = 1;
+  string fulfillment_id = 2;
+}

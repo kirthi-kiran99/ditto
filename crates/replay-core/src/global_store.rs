@@ -66,9 +66,17 @@ pub async fn record_fn_call(
         None    => return,
     };
 
+    // In Shadow mode, write to the capture_id so the harness can read new values
+    // without polluting the original recording.
+    let write_record_id = if matches!(slot.mode, crate::types::ReplayMode::Shadow) {
+        slot.capture_id.unwrap_or(slot.record_id)
+    } else {
+        slot.record_id
+    };
+
     let interaction = Interaction {
         id:           uuid::Uuid::new_v4(),
-        record_id:    slot.record_id,
+        record_id:    write_record_id,
         parent_id:    None,
         sequence:     slot.sequence,
         call_type:    slot.call_type,

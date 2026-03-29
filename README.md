@@ -687,7 +687,7 @@ Before manual integration, run the audit tool to find all call sites that need c
 
 ```bash
 # scan and report (read-only)
-cargo replay-audit --path ./crates
+cargo replay-audit ./crates
 
 # output:
 # [HTTP]   crates/router/src/client.rs:42   reqwest::Client::new()
@@ -698,10 +698,10 @@ cargo replay-audit --path ./crates
 # 12 sites found. 10 auto-fixable. Run with --fix to apply patches.
 
 # auto-patch all fixable sites
-cargo replay-audit --path ./crates --fix
+cargo replay-audit ./crates --fix
 
 # machine-readable output for CI
-cargo replay-audit --path ./crates --json > audit-report.json
+cargo replay-audit ./crates --json > audit-report.json
 ```
 
 The `--fix` flag applies these rewrites automatically:

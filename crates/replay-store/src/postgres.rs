@@ -1,10 +1,11 @@
 use async_trait::async_trait;
+use chrono::DateTime;
 use replay_core::{CallStatus, CallType, Interaction, MacroStore};
 use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 use uuid::Uuid;
 
-use crate::store::{InteractionStore, Result, StoreError};
+use crate::store::{InteractionStore, RecordingSummary, Result, StoreError};
 
 #[derive(Debug)]
 pub struct PostgresStore {
@@ -244,6 +245,15 @@ impl InteractionStore for PostgresStore {
         Ok(row.as_ref().map(row_to_interaction))
     }
 
+    async fn delete_by_record_id(&self, record_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM interactions WHERE record_id = $1")
+            .bind(record_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StoreError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn get_recent_record_ids(&self, limit: usize) -> Result<Vec<Uuid>> {
         let rows = sqlx::query(
             r#"SELECT DISTINCT record_id FROM interactions
@@ -255,6 +265,51 @@ impl InteractionStore for PostgresStore {
         .map_err(|e| StoreError::Database(e.to_string()))?;
 
         Ok(rows.iter().map(|r| r.get::<Uuid, _>("record_id")).collect())
+    }
+
+    async fn list_recordings(
+        &self,
+        limit:  usize,
+        offset: usize,
+    ) -> Result<Vec<RecordingSummary>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                record_id,
+                COUNT(*)::int                                                            AS interaction_count,
+                MAX(recorded_at)                                                         AS recorded_at,
+                COALESCE(MAX(build_hash),   '')                                          AS build_hash,
+                COALESCE(MAX(service_name), '')                                          AS service_name,
+                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'method' END), '')    AS method,
+                COALESCE(MAX(CASE WHEN sequence = 0 THEN request->>'path'   END), '')    AS path,
+                COALESCE(MAX(CASE WHEN sequence = 0 THEN (response->>'status')::int END), 0) AS status_code
+            FROM interactions
+            GROUP BY record_id
+            ORDER BY MAX(recorded_at) DESC
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Database(e.to_string()))?;
+
+        let summaries = rows
+            .iter()
+            .map(|row| RecordingSummary {
+                record_id:         row.get("record_id"),
+                interaction_count: row.get::<i32, _>("interaction_count") as u32,
+                recorded_at:       row.get::<DateTime<chrono::Utc>, _>("recorded_at"),
+                build_hash:        row.get("build_hash"),
+                service_name:      row.get("service_name"),
+                method:            row.get("method"),
+                path:              row.get("path"),
+                status_code:       row.get::<i32, _>("status_code") as u16,
+            })
+            .collect();
+
+        Ok(summaries)
     }
 }
 

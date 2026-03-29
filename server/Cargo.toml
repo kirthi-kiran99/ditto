@@ -1,0 +1,27 @@
+[package]
+name    = "ditto-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ditto-server"
+path = "src/main.rs"
+
+[dependencies]
+replay-core         = { path = "../crates/replay-core" }
+replay-store        = { path = "../crates/replay-store" }
+replay-interceptors = { path = "../crates/replay-interceptors" }
+replay-diff         = { path = "../crates/replay-diff" }
+
+axum        = "0.6"
+tokio       = { version = "1", features = ["full"] }
+tower-http  = { version = "0.4", features = ["fs", "cors"] }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+uuid        = { version = "1", features = ["v4", "serde"] }
+chrono      = { version = "0.4", features = ["serde"] }
+thiserror   = "1"
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow      = "1"
+toml        = "0.8"

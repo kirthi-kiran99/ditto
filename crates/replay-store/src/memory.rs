@@ -6,7 +6,7 @@ use replay_core::{CallType, Interaction, MacroStore};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::store::{InteractionStore, Result, StoreError};
+use crate::store::{InteractionStore, RecordingSummary, Result, StoreError};
 
 /// Thread-safe in-memory store for unit tests. No Postgres required.
 #[derive(Clone, Default, Debug)]
@@ -17,6 +17,37 @@ pub struct InMemoryStore {
 impl InMemoryStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Pre-populate the store with a set of interactions.
+    ///
+    /// Useful in replay tests: seed the store with a previous recording, then
+    /// run the service under test in `ReplayMode::Replay` to verify it returns
+    /// the stored responses.
+    pub fn seed(&self, interactions: impl IntoIterator<Item = Interaction>) {
+        let mut data = self.data.lock().expect("seed: lock poisoned");
+        for i in interactions {
+            data.entry(i.record_id).or_default().push(i);
+        }
+    }
+
+    /// All interactions across every `record_id`, in insertion order.
+    ///
+    /// Primarily useful for post-request assertions in tests.
+    pub fn all(&self) -> Vec<Interaction> {
+        let data = self.data.lock().expect("all: lock poisoned");
+        data.values().flat_map(|v| v.iter().cloned()).collect()
+    }
+
+    /// Total number of stored interactions across all `record_id`s.
+    pub fn len(&self) -> usize {
+        let data = self.data.lock().expect("len: lock poisoned");
+        data.values().map(|v| v.len()).sum()
+    }
+
+    /// Returns `true` if no interactions have been stored yet.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -75,10 +106,65 @@ impl InteractionStore for InMemoryStore {
         Ok(result)
     }
 
+    async fn delete_by_record_id(&self, record_id: Uuid) -> Result<()> {
+        let mut data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+        data.remove(&record_id);
+        Ok(())
+    }
+
     async fn get_recent_record_ids(&self, limit: usize) -> Result<Vec<Uuid>> {
         let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
         let ids: Vec<Uuid> = data.keys().copied().take(limit).collect();
         Ok(ids)
+    }
+
+    async fn list_recordings(
+        &self,
+        limit:  usize,
+        offset: usize,
+    ) -> Result<Vec<RecordingSummary>> {
+        let data = self.data.lock().map_err(|e| StoreError::Database(e.to_string()))?;
+
+        // Build a summary per record_id, sorted by recorded_at DESC.
+        let mut summaries: Vec<RecordingSummary> = data
+            .iter()
+            .map(|(id, interactions)| {
+                let count = interactions.len() as u32;
+                let entry = interactions.iter().find(|i| i.sequence == 0);
+                match entry {
+                    Some(e) => RecordingSummary {
+                        record_id:         *id,
+                        method:            e.request.get("method")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("").to_string(),
+                        path:              e.request.get("path")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("").to_string(),
+                        status_code:       e.response.get("status")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0) as u16,
+                        recorded_at:       e.recorded_at,
+                        build_hash:        e.build_hash.clone(),
+                        service_name:      e.service_name.clone(),
+                        interaction_count: count,
+                    },
+                    None => RecordingSummary {
+                        record_id:         *id,
+                        method:            String::new(),
+                        path:              String::new(),
+                        status_code:       0,
+                        recorded_at:       chrono::Utc::now(),
+                        build_hash:        String::new(),
+                        service_name:      String::new(),
+                        interaction_count: count,
+                    },
+                }
+            })
+            .collect();
+
+        // Most recent first.
+        summaries.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+        Ok(summaries.into_iter().skip(offset).take(limit).collect())
     }
 }
 
