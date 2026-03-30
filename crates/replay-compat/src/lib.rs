@@ -52,6 +52,9 @@ pub mod redis;
 pub mod sql;
 pub mod tokio;
 
+#[cfg(feature = "bb8-diesel")]
+pub mod bb8_diesel;
+
 // ── global store / mode ───────────────────────────────────────────────────────
 
 static GLOBAL: OnceLock<RwLock<Option<(Arc<dyn InteractionStore>, ReplayMode)>>> = OnceLock::new();

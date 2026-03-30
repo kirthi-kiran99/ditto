@@ -14,7 +14,7 @@ tonic-build = "0.10"
 replay-core         = { path = "../../crates/replay-core" }
 replay-store        = { path = "../../crates/replay-store" }
 replay-interceptors = { path = "../../crates/replay-interceptors" }
-replay-compat       = { path = "../../crates/replay-compat" }
+replay-compat       = { path = "../../crates/replay-compat", features = ["bb8-diesel"] }
 replay-macro        = { path = "../../crates/replay-macro" }
 
 axum               = "0.6"
@@ -25,9 +25,9 @@ tower              = "0.4"
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
 sqlx               = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
-diesel             = { version = "2.1", features = ["postgres", "serde_json", "uuid", "chrono"] }
-diesel-async       = { version = "0.4", features = ["postgres", "deadpool"] }
-deadpool           = "0.9"
+diesel             = { version = "2.3.5", features = ["postgres", "serde_json", "uuid", "chrono"] }
+async-bb8-diesel   = "0.3"
+bb8                = "0.9"
 uuid               = { version = "1", features = ["v4"] }
 anyhow             = "1"
 tracing            = "0.1"

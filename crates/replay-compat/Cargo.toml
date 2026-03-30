@@ -11,6 +11,7 @@ http         = []
 redis        = []
 sql          = []
 diesel       = []
+bb8-diesel   = ["dep:async-bb8-diesel", "dep:bb8"]
 tokio-compat = []
 
 [dependencies]
@@ -35,8 +36,12 @@ redis = { version = "0.23", features = ["tokio-comp"] }
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
 
 # Diesel
-diesel = { version = "2.1", features = ["postgres", "serde_json", "uuid", "chrono"] }
-diesel-async = { version = "0.4", features = ["postgres", "deadpool"] }
+diesel = { version = "2.3.5", features = ["postgres", "serde_json", "uuid", "chrono"] }
+diesel-async = { version = "0.8", features = ["postgres", "deadpool"] }
+
+# async_bb8_diesel
+async-bb8-diesel = { version = "0.3", optional = true }
+bb8 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 replay-store = { path = "../replay-store" }

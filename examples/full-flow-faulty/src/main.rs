@@ -65,10 +65,8 @@ use uuid::Uuid;
 
 // Diesel imports
 use diesel::prelude::*;
-use diesel_async::{AsyncPgConnection, pooled_connection::AsyncDieselConnectionManager};
 use diesel_models::{DieselOrder, NewDieselOrder};
 use diesel_models::schema::diesel_orders;
-use deadpool::managed::Pool;
 
 // ── Proto-generated types ─────────────────────────────────────────────────────
 
@@ -114,11 +112,11 @@ struct PipelineRequest {
 
 #[derive(Clone)]
 struct AppState {
-    store:       Arc<dyn InteractionStore>,
-    db:          Option<replay_compat::sql::Pool>,
-    diesel_pool: Option<Pool<AsyncDieselConnectionManager<AsyncPgConnection>>>,
-    redis:       Option<replay_compat::redis::Connection>,
-    grpc_ch:     Channel,
+    store:           Arc<dyn InteractionStore>,
+    db:              Option<replay_compat::sql::Pool>,
+    diesel_pool:     Option<replay_compat::bb8_diesel::Bb8Pool>,
+    redis:           Option<replay_compat::redis::Connection>,
+    grpc_ch:         Channel,
 }
 
 // ── FAULTY record_io functions — sequential (checkout) ────────────────────────
@@ -352,11 +350,11 @@ async fn checkout_diesel(
         Err(_) => format!("user-{}", req.user_id),
     };
 
-    // seq=2: Diesel/Postgres — same logic as correct version
+    // seq=2: BB8-Diesel/Postgres — same logic as correct version
     let db_result: Option<String> = if let Some(ref pool) = state.diesel_pool {
         match pool.get().await {
             Ok(mut conn) => {
-                let diesel_exec = replay_compat::diesel::DieselExecutor::new();
+                let diesel_exec = replay_compat::bb8_diesel::Bb8DieselExecutor::new();
 
                 let idem_key = req.idempotency_key.clone();
 
@@ -380,7 +378,7 @@ async fn checkout_diesel(
                     };
 
                     let _ = diesel_exec
-                        .execute(&mut conn, diesel::insert_into(diesel_orders::table).values(&new_order))
+                        .execute(&mut conn, diesel::insert_into(diesel_orders::table).values(new_order))
                         .await;
                     Some(order_id.clone())
                 }
@@ -443,6 +441,128 @@ async fn checkout_diesel(
             "total": total,
             "status": "accepted",
             "source": "diesel-faulty",
+        })),
+    )
+}
+
+/// POST /checkout-bb8-diesel — BB8-Diesel version with same bugs as checkout.
+async fn checkout_bb8_diesel(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CheckoutRequest>,
+) -> impl IntoResponse {
+    let order_id = Uuid::new_v4().to_string();
+    tracing::info!(order_id, user_id = req.user_id, "checkout-bb8-diesel started (faulty)");
+
+    // seq=1: HTTP outbound — same as correct version
+    let http_client = replay_compat::http::Client::new();
+    let user_name: String = match http_client
+        .get(format!(
+            "https://jsonplaceholder.typicode.com/users/{}",
+            req.user_id
+        ))
+        .send()
+        .await
+    {
+        Ok(resp) => resp
+            .json::<Value>()
+            .await
+            .ok()
+            .and_then(|v| v["name"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("user-{}", req.user_id)),
+        Err(_) => format!("user-{}", req.user_id),
+    };
+
+    // seq=2: BB8-Diesel/Postgres — same logic as correct version
+    let db_result: Option<String> = if let Some(ref pool) = state.diesel_pool {
+        match pool.get().await {
+            Ok(mut conn) => {
+                let bb8_exec = replay_compat::bb8_diesel::Bb8DieselExecutor::new();
+
+                let idem_key = req.idempotency_key.clone();
+
+                let existing: Option<DieselOrder> = bb8_exec
+                    .first_optional(
+                        &mut conn,
+                        diesel_orders::table.filter(diesel_orders::idempotency_key.eq(idem_key)),
+                    )
+                    .await
+                    .ok()
+                    .flatten();
+
+                if let Some(row) = existing {
+                    Some(row.order_id)
+                } else {
+                    let new_order = NewDieselOrder {
+                        order_id: order_id.clone(),
+                        idempotency_key: req.idempotency_key.clone(),
+                        amount: req.amount,
+                        status: "pending".to_string(),
+                    };
+
+                    let _ = bb8_exec
+                        .execute(&mut conn, diesel::insert_into(diesel_orders::table).values(new_order))
+                        .await;
+                    Some(order_id.clone())
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get bb8-diesel connection from pool: {e}");
+                Some(order_id.clone())
+            }
+        }
+    } else {
+        Some(order_id.clone())
+    };
+
+    let final_order_id = db_result.unwrap_or_else(|| order_id.clone());
+
+    // seq=3: Redis — same as correct version
+    if let Some(redis) = &state.redis {
+        let key = format!("idempotency:{}", req.idempotency_key);
+        if let Err(e) = redis.set(&key, &final_order_id, 300).await {
+            tracing::warn!("redis set failed: {e}");
+        }
+    }
+
+    // seq=4: gRPC — BUG: FaultyFulfillmentServer returns "queued" + different id format
+    let instrumented_ch = tower::ServiceBuilder::new()
+        .layer(ReplayGrpcLayer::new(state.store.clone()))
+        .service(state.grpc_ch.clone());
+    let mut grpc_client = FulfillmentServiceClient::new(instrumented_ch);
+
+    let fulfillment_id = grpc_client
+        .notify_order(NotifyOrderRequest {
+            order_id: final_order_id.clone(),
+            amount: req.amount,
+        })
+        .await
+        .map(|r| r.into_inner().fulfillment_id)
+        .unwrap_or_else(|e| {
+            tracing::warn!("gRPC notify failed: {e}");
+            "unknown".into()
+        });
+
+    // seq=5: compute_tax — FAULTY (9% instead of 8%)
+    let tax = compute_tax(req.amount).await;
+
+    // seq=6: apply_discount — FAULTY (SAVE10=5% instead of 10%)
+    let coupon = req.coupon_code.clone().unwrap_or_default();
+    let discount = apply_discount(req.amount, coupon).await;
+
+    let total = (req.amount + tax - discount) * 100.0 / 100.0;
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "order_id": final_order_id,
+            "fulfillment_id": fulfillment_id,
+            "user": user_name,
+            "amount": req.amount,
+            "tax": tax,
+            "discount": discount,
+            "total": total,
+            "status": "accepted",
+            "source": "bb8-diesel-faulty",
         })),
     )
 }
@@ -577,17 +697,17 @@ async fn main() -> anyhow::Result<()> {
         None      => None,
     };
 
-    // ── Diesel connection (intercepted by replay_compat) ──────────────────────
+    // ── BB8 Diesel connection pool ───────────────────────────────────────────
     let diesel_pool = match replay_store::db_url() {
         Some(url) => {
-            let config = AsyncDieselConnectionManager::<AsyncPgConnection>::new(url);
-            match Pool::builder(config).max_size(5).build() {
+            let manager = replay_compat::bb8_diesel::ConnectionManager::new(url);
+            match replay_compat::bb8_diesel::Pool::builder().max_size(5).build(manager).await {
                 Ok(pool) => {
-                    tracing::info!("diesel connection pool established");
+                    tracing::info!("bb8-diesel connection pool established");
                     Some(pool)
                 }
                 Err(e) => {
-                    tracing::warn!("diesel pool build failed: {e}");
+                    tracing::warn!("bb8-diesel pool build failed: {e}");
                     None
                 }
             }
@@ -624,11 +744,12 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState { store: store.clone(), db, diesel_pool, redis, grpc_ch });
 
     let app = Router::new()
-        .route("/health",              get(health))
-        .route("/checkout",            post(checkout))
-        .route("/checkout-diesel",     post(checkout_diesel))
-        .route("/analyze/:product_id", get(analyze))
-        .route("/pipeline",            post(pipeline))
+        .route("/health",                 get(health))
+        .route("/checkout",               post(checkout))
+        .route("/checkout-diesel",        post(checkout_diesel))
+        .route("/checkout-bb8-diesel",    post(checkout_bb8_diesel))
+        .route("/analyze/:product_id",    get(analyze))
+        .route("/pipeline",               post(pipeline))
         .layer(middleware::from_fn_with_state(
             store,
             recording_middleware_with_store,
@@ -643,10 +764,11 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::warn!(%addr, "FAULTY full-flow server listening — for replay testing only");
     tracing::info!("endpoints:");
-    tracing::info!("  POST http://localhost:{port}/checkout         → wrong tax/discount/gRPC/audit");
-    tracing::info!("  POST http://localhost:{port}/checkout-diesel  → wrong tax/discount/gRPC (Diesel ORM)");
-    tracing::info!("  GET  http://localhost:{port}/analyze/42       → wrong price/inventory/rating");
-    tracing::info!("  POST http://localhost:{port}/pipeline         → wrong validate/enrich/risk/format");
+    tracing::info!("  POST http://localhost:{port}/checkout            → wrong tax/discount/gRPC/audit");
+    tracing::info!("  POST http://localhost:{port}/checkout-diesel     → wrong tax/discount/gRPC (diesel-async)");
+    tracing::info!("  POST http://localhost:{port}/checkout-bb8-diesel → wrong tax/discount/gRPC (bb8-diesel)");
+    tracing::info!("  GET  http://localhost:{port}/analyze/42          → wrong price/inventory/rating");
+    tracing::info!("  POST http://localhost:{port}/pipeline            → wrong validate/enrich/risk/format");
 
     axum::Server::bind(&addr)
         .serve(app.with_state(state).into_make_service())
