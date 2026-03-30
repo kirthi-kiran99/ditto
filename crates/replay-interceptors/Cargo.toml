@@ -42,6 +42,10 @@ http = "0.2"
 
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono", "json"] }
 
+# Diesel
+diesel = { version = "2.1", features = ["postgres", "serde_json", "uuid", "chrono"] }
+diesel-async = { version = "0.4", features = ["postgres", "deadpool"] }
+
 tonic        = "0.10"
 tower        = "0.4"
 base64       = "0.21"

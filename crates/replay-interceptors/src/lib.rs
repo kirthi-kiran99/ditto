@@ -1,3 +1,4 @@
+pub mod diesel;
 pub mod grpc;
 pub mod harness;
 pub mod http_client;
@@ -6,6 +7,7 @@ pub mod middleware;
 pub mod postgres;
 pub mod redis_client;
 
+pub use diesel::DieselReplayExecutor;
 pub use grpc::{ReplayGrpcLayer, ReplayGrpcService};
 pub use harness::{HarnessConfig, HarnessStatus, ReplayHarness, ReplayResult};
 pub use http_client::{make_http_client, ReplayMiddleware};

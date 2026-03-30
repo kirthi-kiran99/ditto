@@ -46,6 +46,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use replay_core::{InteractionStore, ReplayMode};
 
+pub mod diesel;
 pub mod http;
 pub mod redis;
 pub mod sql;
